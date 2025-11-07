@@ -6,8 +6,10 @@ const { logger } = require("zigbee-herdsman-converters/lib/logger");
 const lumi = require("zigbee-herdsman-converters/lib/lumi");
 const m = require("zigbee-herdsman-converters/lib/modernExtend");
 
+// --- START OF CONFIGURABLE PARAMETERS ---
 // Minimum interval (in milliseconds) to send a PMTSD frame, even if no value has changed.
 const MIN_SEND_INTERVAL_MS = 5000;
+// --- END OF CONFIGURABLE PARAMETERS ---
 
 const e = exposes.presets;
 const ea = exposes.access;
@@ -21,19 +23,6 @@ const {
 const NS = "zhc:lumi";
 const manufacturerCode = lumi.manufacturerCode;
 
-// Custom converter to sync temperature to local_temperature for climate entity
-const temperature_with_local = {
-    cluster: 'msTemperatureMeasurement',
-    type: ['attributeReport', 'readResponse'],
-    convert: (model, msg, publish, options, meta) => {
-        const temperature = parseFloat(msg.data['measuredValue']) / 100.0;
-        // Return both temperature (for sensor) and local_temperature (for climate entity)
-        return {
-            local_temperature: temperature
-        };
-    },
-};
-
 const W100_0844_req = {
     cluster: 'manuSpecificLumi',
     type: ['attributeReport', 'readResponse'],
@@ -45,16 +34,18 @@ const W100_0844_req = {
         if (attr.slice(-4).equals(endsWith)) {
             meta.logger.info(`Aqara W100: PMTSD request detected from device ${meta.device.ieeeAddr}`);
             
-            // Function to convert string -> number
+            // Fonction de conversion string -> number
             const convertToNumber = (key, value) => {
                 if (typeof value !== 'string') return value;
                 
                 switch(key) {
-                    case 'system_mode':
+                    case 'power':
+                        return value.toLowerCase() === 'on' ? 0 : 1;
+                    case 'hvac_mode':
                         const modeMap = { 'cool': 0, 'heat': 1, 'auto': 2 };
                         return modeMap[value.toLowerCase()] ?? 0;
-                    case 'fan_mode':
-                        const speedMap = { 'auto': 0, 'low': 1, 'medium': 2, 'high': 3 };
+                    case 'vent_speed':
+                        const speedMap = { 'auto': 0, 'low': 1, 'middle': 2, 'high': 3 };
                         return speedMap[value.toLowerCase()] ?? 0;
                     case 'unused':
                         return parseInt(value, 10);
@@ -64,21 +55,11 @@ const W100_0844_req = {
             };
             
             // Retrieve PMTSD values from meta.state and convert to numbers
-            // When off, preserve the last active mode from device.meta
-            let modeValue = 0;
-            if (meta.state?.system_mode === 'off') {
-                // Device is off, use stored last active mode
-                modeValue = meta.device.meta?.lastActiveMode ?? 0;
-            } else {
-                // Device is on, use current mode
-                modeValue = convertToNumber('system_mode', meta.state?.system_mode) ?? 0;
-            }
-            
             const pmtsdValues = {
-                P: meta.state?.system_mode === 'off' ? 1 : 0,
-                M: modeValue,
-                T: meta.state?.occupied_heating_setpoint ?? 15,
-                S: convertToNumber('fan_mode', meta.state?.fan_mode) ?? 0,
+                P: convertToNumber('power', meta.state?.power) ?? 0,
+                M: convertToNumber('hvac_mode', meta.state?.hvac_mode) ?? 0,
+                T: meta.state?.target_temperature ?? 15.0,
+                S: convertToNumber('vent_speed', meta.state?.vent_speed) ?? 0,
                 D: convertToNumber('unused', meta.state?.unused) ?? 0
             };
             
@@ -96,44 +77,28 @@ const W100_0844_req = {
 };
 
 const PMTSD_to_W100 = {
-    key: ['system_mode', 'occupied_heating_setpoint', 'fan_mode', 'unused', 'PMTSD_to_W100'],
+    key: ['power', 'hvac_mode', 'target_temperature', 'vent_speed', 'unused', 'PMTSD_to_W100'], // MODIFIÉ: mode -> hvac_mode
     convertSet: async (entity, key, value, meta) => {
-        // Logger fallback in case meta.logger is undefined
-        const log = meta.logger || logger;
-        
-        // Extract current P and M from meta.state.system_mode
-        let initialP = 0;
-        let initialM = 0;
-        if (meta.state?.system_mode) {
-            if (meta.state.system_mode === 'off') {
-                initialP = 1;
-                initialM = 0; // Default mode when off
-            } else {
-                initialP = 0;
-                const modeMap = { 'cool': 0, 'heat': 1, 'auto': 2 };
-                initialM = modeMap[meta.state.system_mode] ?? 0;
-            }
-        }
-        
-        // Extract current S from meta.state.fan_mode
-        let initialS = 0;
-        if (meta.state?.fan_mode) {
-            const speedMap = { 'auto': 0, 'low': 1, 'medium': 2, 'high': 3 };
-            initialS = speedMap[meta.state.fan_mode] ?? 0;
-        }
-        
-        // Retrieve current PMTSD values from meta.state
+        // Retrieve current PMTSD values from meta.state with defaults
         let pmtsd = {
-            P: initialP,
-            M: initialM,
-            T: meta.state?.occupied_heating_setpoint ?? 15,
-            S: initialS,
+            P: meta.state?.power ?? 0,
+            M: meta.state?.hvac_mode ?? 0, // MODIFIÉ: mode -> hvac_mode
+            T: meta.state?.target_temperature ?? 15.0,
+            S: meta.state?.vent_speed ?? 0,
             D: meta.state?.unused ?? 0
         };
 
         // Convert text values to numbers for internal storage
-        if (typeof pmtsd.T === 'string') {
-            pmtsd.T = parseInt(pmtsd.T, 10);
+        if (typeof pmtsd.P === 'string') {
+            pmtsd.P = pmtsd.P === 'on' ? 0 : 1;
+        }
+        if (typeof pmtsd.M === 'string') {
+            const modeMap = { 'cool': 0, 'heat': 1, 'auto': 2 };
+            pmtsd.M = modeMap[pmtsd.M] ?? 0;
+        }
+        if (typeof pmtsd.S === 'string') {
+            const speedMap = { 'auto': 0, 'low': 1, 'middle': 2, 'high': 3 };
+            pmtsd.S = speedMap[pmtsd.S] ?? 0;
         }
         if (typeof pmtsd.D === 'string') {
             pmtsd.D = parseInt(pmtsd.D, 10);
@@ -154,93 +119,77 @@ const PMTSD_to_W100 = {
             // For keys set individually by Home Assistant
             let fieldName, previousValue, numValue;
 
-            // Check if Thermostat_Mode is ON for climate commands
-            if (meta.state?.Thermostat_Mode !== 'ON' && ['system_mode', 'occupied_heating_setpoint', 'fan_mode'].includes(key)) {
-                log.warning(`Aqara W100: Ignoring ${key} command - Thermostat_Mode is not ON`);
-                return { state: {} };
-            }
-
             switch (key) {
-                case 'system_mode':
-                    previousValue = pmtsd.M;
-                    let powerChanged = false;
-                    let modeChanged = false;
-
-                    if (value === 'off') {
-                        // Save current mode before turning off
-                        if (pmtsd.P === 0 && pmtsd.M !== undefined) {
-                            if (!meta.device.meta) meta.device.meta = {};
-                            meta.device.meta.lastActiveMode = pmtsd.M;
-                            log.info(`Aqara W100: Saved last active mode M=${pmtsd.M} before turning off`);
-                        }
-                        // Set power to off (1)
-                        if (pmtsd.P !== 1) {
-                            pmtsd.P = 1;
-                            powerChanged = true;
-                            hasChanged = true;
-                        }
+                case 'power':
+                    fieldName = 'P';
+                    previousValue = pmtsd.P;
+                    // Convert string to number: "on" -> 0, "off" -> 1
+                    if (typeof value === 'string') {
+                        numValue = value.toLowerCase() === 'on' ? 0 : 1;
+                        newDisplayValue = value.toLowerCase();
                     } else {
-                        // Set power to on (0) if not already
-                        if (pmtsd.P !== 0) {
-                            pmtsd.P = 0;
-                            powerChanged = true;
-                            hasChanged = true;
-                        }
-                        // Set mode
-                        const modeMap = { 'cool': 0, 'heat': 1, 'auto': 2 };
-                        if (typeof value === 'string') {
-                            numValue = modeMap[value.toLowerCase()];
-                        } else {
-                            numValue = Number(value);
-                        }
-                        if (numValue !== undefined && [0, 1, 2].includes(numValue)) {
-                            if (pmtsd.M !== numValue) {
-                                pmtsd.M = numValue;
-                                modeChanged = true;
-                                hasChanged = true;
-                                // Save this as the last active mode
-                                if (!meta.device.meta) meta.device.meta = {};
-                                meta.device.meta.lastActiveMode = numValue;
-                            }
-                            const modeNames = ['cool', 'heat', 'auto'];
-                            newDisplayValue = modeNames[numValue] || value;
-                        } else {
-                            throw new Error('system_mode must be "off", "cool", "heat", or "auto"');
-                        }
+                        numValue = Number(value);
+                        newDisplayValue = numValue === 0 ? 'on' : 'off';
                     }
-                    hasChanged = powerChanged || modeChanged;
+                    if (![0, 1].includes(numValue)) {
+                        throw new Error('power must be "on" (0) or "off" (1)');
+                    }
+                    pmtsd.P = numValue;
+                    hasChanged = numValue !== previousValue;
                     break;
-                case 'occupied_heating_setpoint':
+                case 'hvac_mode': // MODIFIÉ: mode -> hvac_mode
+                    fieldName = 'M';
+                    previousValue = pmtsd.M;
+                    // Convert string to number: "cool" -> 0, "heat" -> 1, "auto" -> 2
+                    if (typeof value === 'string') {
+                        const modeMap = { 'cool': 0, 'heat': 1, 'auto': 2 };
+                        numValue = modeMap[value.toLowerCase()];
+                        newDisplayValue = value.toLowerCase();
+                    } else {
+                        numValue = Number(value);
+                        const modeNames = ['cool', 'heat', 'auto'];
+                        newDisplayValue = modeNames[numValue];
+                    }
+                    if (![0, 1, 2].includes(numValue)) {
+                        throw new Error('hvac_mode must be "cool" (0), "heat" (1), or "auto" (2)');
+                    }
+                    pmtsd.M = numValue;
+                    hasChanged = numValue !== previousValue;
+                    break;
+                case 'target_temperature':
+                    fieldName = 'T';
                     previousValue = pmtsd.T;
                     const temp = parseFloat(value);
-                    if (isNaN(temp) || temp < 15 || temp > 30) {
-                        throw new Error('occupied_heating_setpoint must be between 15 and 30');
+                    if (isNaN(temp) || temp < 15.0 || temp > 30.0) {
+                        throw new Error('temperature must be between 15.0 and 30.0');
                     }
-                    // Round to nearest integer
-                    const rounded = Math.round(temp);
+                    // Round to 1 decimal place
+                    const rounded = Math.round(temp * 10) / 10;
                     pmtsd.T = rounded;
                     newDisplayValue = rounded;
                     hasChanged = rounded !== previousValue;
                     break;
-                case 'fan_mode':
+                case 'vent_speed':
+                    fieldName = 'S';
                     previousValue = pmtsd.S;
-                    // Convert string to number: "auto" -> 0, "low" -> 1, "medium" -> 2, "high" -> 3
+                    // Convert string to number: "auto" -> 0, "low" -> 1, "middle" -> 2, "high" -> 3
                     if (typeof value === 'string') {
-                        const speedMap = { 'auto': 0, 'low': 1, 'medium': 2, 'high': 3 };
+                        const speedMap = { 'auto': 0, 'low': 1, 'middle': 2, 'high': 3 };
                         numValue = speedMap[value.toLowerCase()];
                         newDisplayValue = value.toLowerCase();
                     } else {
                         numValue = Number(value);
-                        const speedNames = ['auto', 'low', 'medium', 'high'];
+                        const speedNames = ['auto', 'low', 'middle', 'high'];
                         newDisplayValue = speedNames[numValue];
                     }
                     if (![0, 1, 2, 3].includes(numValue)) {
-                        throw new Error('fan_mode must be "auto", "low", "medium", or "high"');
+                        throw new Error('vent_speed must be "auto" (0), "low" (1), "middle" (2), or "high" (3)');
                     }
                     pmtsd.S = numValue;
                     hasChanged = numValue !== previousValue;
                     break;
                 case 'unused':
+                    fieldName = 'D';
                     previousValue = pmtsd.D;
                     numValue = typeof value === 'string' ? parseInt(value, 10) : Number(value);
                     if (![0, 1].includes(numValue)) {
@@ -256,18 +205,20 @@ const PMTSD_to_W100 = {
         }
 
         // Log update
-        log.info(`Aqara W100: Processed ${key}, PMTSD: ${JSON.stringify(pmtsd)}, Changed: ${hasChanged}`);
+        logger.info(`Aqara W100: Processed ${key}, PMTSD: ${JSON.stringify(pmtsd)}, Changed: ${hasChanged}`);
 
         // Prepare display values for state update
+        const powerDisplay = pmtsd.P === 0 ? 'on' : 'off';
         const modeDisplay = ['cool', 'heat', 'auto'][pmtsd.M] || 'cool';
-        const speedDisplay = ['auto', 'low', 'medium', 'high'][pmtsd.S] || 'auto';
+        const speedDisplay = ['auto', 'low', 'middle', 'high'][pmtsd.S] || 'auto';
 
-        // Update state with climate entity values
+        // Update state with display values (strings for selects, number for temperature)
         const stateUpdate = {
             state: {
-                occupied_heating_setpoint: pmtsd.T,
-                fan_mode: speedDisplay,
-                system_mode: pmtsd.P === 1 ? 'off' : modeDisplay,
+                power: powerDisplay,
+                hvac_mode: modeDisplay, // MODIFIÉ: mode -> hvac_mode
+                target_temperature: pmtsd.T,
+                vent_speed: speedDisplay,
                 unused: String(pmtsd.D)
             }
         };
@@ -275,10 +226,11 @@ const PMTSD_to_W100 = {
         // Check if all PMTSD values are defined
         const { P, M, T, S, D } = pmtsd;
         if (P === undefined || M === undefined || T === undefined || S === undefined || D === undefined) {
-            log.info(`Aqara W100: PMTSD frame not sent: missing values (P:${P}, M:${M}, T:${T}, S:${S}, D:${D})`);
+            logger.info(`Aqara W100: PMTSD frame not sent: missing values (P:${P}, M:${M}, T:${T}, S:${S}, D:${D})`);
             return stateUpdate;
         }
 
+        // --- MODIFICATION START ---
         // Get current time and last send time
         const now = Date.now();
         if (!meta.device.meta) {
@@ -296,12 +248,15 @@ const PMTSD_to_W100 = {
 
         // Do not send frame if no value changed AND it's too soon since the last send
         if (!shouldSend) {
-            log.info(`Aqara W100: PMTSD frame not sent: no value change and sent ${timeElapsed}ms ago (less than ${MIN_SEND_INTERVAL_MS}ms)`);
+            logger.info(`Aqara W100: PMTSD frame not sent: no value change and sent ${timeElapsed}ms ago (less than ${MIN_SEND_INTERVAL_MS}ms)`);
             return stateUpdate;
         }
+        // If we are here, we are sending.
+        // We will update meta.device.meta.lastPMTSDSend = now; *after* the successful write.
+        // --- MODIFICATION END ---
 
-        // Format PMTSD (convert numbers to strings for the protocol)
-        const pmtsdStr = `P${P}_M${M}_T${T}_S${S}_D${D}`;
+        // Format matric (convert numbers to strings for the protocol)
+        const pmtsdStr = `P${P}_M${M}_T${T.toFixed(1)}_S${S}_D${D}`;
         const pmtsdBytes = Array.from(pmtsdStr).map(c => c.charCodeAt(0));
         const pmtsdLen = pmtsdBytes.length;
 
@@ -324,7 +279,7 @@ const PMTSD_to_W100 = {
         // Ensure entity is an Endpoint
         const endpoint = entity.getEndpoint ? entity.getEndpoint(1) : entity;
         if (!endpoint || typeof endpoint.write !== 'function') {
-            log.error(`Aqara W100: Invalid endpoint for write: ${JSON.stringify(endpoint)}`);
+            logger.error(`Aqara W100: Invalid endpoint for write: ${JSON.stringify(endpoint)}`);
             throw new Error('Aqara W100: Endpoint does not support write operation');
         }
 
@@ -334,10 +289,12 @@ const PMTSD_to_W100 = {
             { manufacturerCode: 4447, disableDefaultResponse: true },
         );
 
-        log.info(`Aqara W100: PMTSD frame sent: ${pmtsdStr}`);
+        logger.info(`Aqara W100: PMTSD frame sent: ${pmtsdStr}`);
         
+        // --- MODIFICATION START ---
         // Update the last send timestamp after successful write
         meta.device.meta.lastPMTSDSend = now;
+        // --- MODIFICATION END ---
         
         return stateUpdate;
     },
@@ -347,9 +304,10 @@ const PMTSD_to_W100 = {
         
         // Define default values
         const defaultValues = {
-            'occupied_heating_setpoint': 15,
-            'fan_mode': 'auto',
-            'system_mode': 'cool',
+            'power': 'on',
+            'hvac_mode': 'cool', // MODIFIÉ: mode -> hvac_mode
+            'target_temperature': 15.0,
+            'vent_speed': 'auto',
             'unused': '0'
         };
         
@@ -390,24 +348,6 @@ const PMTSD_from_W100 = {
         const partsForCombined = [];
         const pairs = payloadAscii.split('_');
         
-        // Initialize P and M from meta.state since device may send partial updates
-        // Extract P and M from current system_mode if available
-        let initialP = 0;
-        let initialM = 0;
-        if (meta.state?.system_mode) {
-            if (meta.state.system_mode === 'off') {
-                initialP = 1;
-                // Restore last active mode when off
-                initialM = meta.device.meta?.lastActiveMode ?? 0;
-            } else {
-                initialP = 0;
-                const modeMap = { 'cool': 0, 'heat': 1, 'auto': 2 };
-                initialM = modeMap[meta.state.system_mode] ?? 0;
-            }
-        }
-        
-        const pmtsd = { P: initialP, M: initialM, T: 15, S: 0, D: 0 }; // Initialize from current state
-        
         pairs.forEach(p => {
             if (p.length >= 2) {
                 const key = p[0].toLowerCase();
@@ -420,43 +360,39 @@ const PMTSD_from_W100 = {
                 switch (key) {
                     case 'p':
                         newKey = 'PW';
-                        stateKey = null; // Don't map P directly - will be combined with M for system_mode
+                        stateKey = 'power';
                         processedValue = parseInt(value, 10);
-                        if (isNaN(processedValue) || ![0, 1].includes(processedValue)) {
-                            meta.logger.warn(`Aqara W100: Invalid P value: ${value}`);
-                            return;
-                        }
-                        pmtsd.P = processedValue;
-                        displayValue = processedValue;
-                        meta.logger.info(`Aqara W100: Parsed P=${processedValue}`);
+                        if (isNaN(processedValue) || ![0, 1].includes(processedValue)) return;
+                        // Convert number to string for select: 0 -> "on", 1 -> "off"
+                        displayValue = processedValue === 0 ? 'on' : 'off';
                         break;
                     case 'm':
                         newKey = 'MW';
-                        stateKey = null; // Don't map M directly - will be combined with P for system_mode
+                        stateKey = 'hvac_mode'; // MODIFIÉ: mode -> hvac_mode
                         processedValue = parseInt(value, 10);
-                        if (isNaN(processedValue) || ![0, 1, 2].includes(processedValue)) {
-                            meta.logger.warn(`Aqara W100: Invalid M value: ${value}`);
-                            return;
-                        }
-                        pmtsd.M = processedValue;
-                        displayValue = processedValue;
-                        meta.logger.info(`Aqara W100: Parsed M=${processedValue}`);
+                        if (isNaN(processedValue) || ![0, 1, 2].includes(processedValue)) return;
+                        // Convert number to string for select: 0 -> "cool", 1 -> "heat", 2 -> "auto"
+                        const modeNames = ['cool', 'heat', 'auto'];
+                        displayValue = modeNames[processedValue];
                         break;
                     case 't':
                         newKey = 'TW';
-                        stateKey = 'occupied_heating_setpoint';
-                        processedValue = parseInt(value, 10);
-                        if (isNaN(processedValue) || processedValue < 15 || processedValue > 30) return;
-                        pmtsd.T = processedValue;
-                        displayValue = processedValue;
+                        stateKey = 'target_temperature';
+                        const numValue = parseFloat(value);
+                        if (!isNaN(numValue) && numValue >= 15.0 && numValue <= 30.0) {
+                            processedValue = Math.round(numValue * 10) / 10;
+                            displayValue = processedValue;
+                        } else {
+                            return;
+                        }
                         break;
                     case 's':
                         newKey = 'SW';
-                        stateKey = 'fan_mode';
+                        stateKey = 'vent_speed';
                         processedValue = parseInt(value, 10);
                         if (isNaN(processedValue) || ![0, 1, 2, 3].includes(processedValue)) return;
-                        pmtsd.S = processedValue;
-                        const speedNames = ['auto', 'low', 'medium', 'high'];
+                        // Convert number to string for select: 0 -> "auto", 1 -> "low", 2 -> "middle", 3 -> "high"
+                        const speedNames = ['auto', 'low', 'middle', 'high'];
                         displayValue = speedNames[processedValue];
                         break;
                     case 'd':
@@ -464,7 +400,6 @@ const PMTSD_from_W100 = {
                         stateKey = 'unused';
                         processedValue = parseInt(value, 10);
                         if (isNaN(processedValue) || ![0, 1].includes(processedValue)) return;
-                        pmtsd.D = processedValue;
                         displayValue = String(processedValue);
                         break;
                     default:
@@ -472,29 +407,14 @@ const PMTSD_from_W100 = {
                         stateKey = null;
                 }
                 
-                result[newKey] = value;
+                result[newKey] = value; // Keep raw value for display
                 if (stateKey) {
-                    stateUpdate.state[stateKey] = displayValue;
-                    result[stateKey] = displayValue;
+                    stateUpdate.state[stateKey] = displayValue; // Store as string for selects
+                    result[stateKey] = displayValue; // Publish as string for selects
                 }
                 partsForCombined.push(`${newKey}${value}`);
             }
         });
-
-        // Combine power state and mode to create system_mode for climate entity
-        // P and M are always valid (initialized from meta.state or defaults)
-        const modeDisplay = ['cool', 'heat', 'auto'][pmtsd.M] || 'cool';
-        const systemMode = pmtsd.P === 1 ? 'off' : modeDisplay;
-        
-        // Save last active mode when device reports it
-        if (pmtsd.P === 0 && pmtsd.M !== undefined) {
-            if (!meta.device.meta) meta.device.meta = {};
-            meta.device.meta.lastActiveMode = pmtsd.M;
-        }
-        
-        stateUpdate.state.system_mode = systemMode;
-        result.system_mode = systemMode;
-        meta.logger.info(`Aqara W100: Computed system_mode=${systemMode} from P=${pmtsd.P}, M=${pmtsd.M}`);
 
         // Format date and time
         const date = new Date();
@@ -516,7 +436,7 @@ const PMTSD_from_W100 = {
         meta.logger.info(`Aqara W100: PMTSD decoded: ${JSON.stringify(result)} from ${meta.device.ieeeAddr}`);
         meta.logger.info(`Aqara W100: Updated meta.state: ${JSON.stringify({ ...meta.state, ...stateUpdate.state })}`);
 
-        return {
+        return { 
             ...result,
             PMTSD_from_W100_Data: combinedString,
             ...stateUpdate
@@ -527,9 +447,6 @@ const PMTSD_from_W100 = {
 const Thermostat_Mode = {
     key: ['Thermostat_Mode'],
     convertSet: async (entity, key, value, meta) => {
-        // Logger fallback in case meta.logger is undefined
-        const log = meta.logger || logger;
-        
         const deviceMac = meta.device.ieeeAddr.replace(/^0x/, '').toLowerCase();
         const hubMac = '54ef4480711a';
         function cleanMac(mac, expectedLen) {
@@ -546,7 +463,7 @@ const Thermostat_Mode = {
         // Ensure entity is an Endpoint
         const endpoint = entity.getEndpoint ? entity.getEndpoint(1) : entity;
         if (!endpoint || typeof endpoint.write !== 'function') {
-            log.error(`Aqara W100: Invalid endpoint for write: ${JSON.stringify(endpoint)}`);
+            logger.error(`Aqara W100: Invalid endpoint for write: ${JSON.stringify(endpoint)}`);
             throw new Error('Aqara W100: Endpoint does not support write operation');
         }
 
@@ -564,7 +481,7 @@ const Thermostat_Mode = {
             frame = Buffer.concat([prefix, messageAlea, zigbeeHeader, messageId, control, payloadMacs, payloadTail]);
 
             // Log the frame for debugging
-            log.info(`Aqara W100: Thermostat_Mode ON frame: ${frame.toString('hex')}`);
+            logger.info(`Aqara W100: Thermostat_Mode ON frame: ${frame.toString('hex')}`);
             
             await endpoint.write(
                 64704,
@@ -592,8 +509,8 @@ const Thermostat_Mode = {
             );
         }
 
-        log.info(`Aqara W100: Thermostat_Mode set to ${value}`);
-        return {state: {Thermostat_Mode: value}};
+        logger.info(`Aqara W100: Thermostat_Mode set to ${value}`);
+        return {};
     },
 };
 
@@ -602,7 +519,7 @@ module.exports = {
     model: "TH-S04D",
     vendor: "Aqara",
     description: "Climate Sensor W100",
-    fromZigbee: [W100_0844_req, PMTSD_from_W100, temperature_with_local],
+    fromZigbee: [W100_0844_req, PMTSD_from_W100],
     toZigbee: [PMTSD_to_W100, Thermostat_Mode],
     configure: async (device, coordinatorEndpoint, logger) => {
         // Initialize default values on first connection
@@ -610,46 +527,60 @@ module.exports = {
         
         // Publish initial default values
         return {
-            occupied_heating_setpoint: 15,
-            fan_mode: 'auto',
-            system_mode: 'cool',
-            unused: '0',
-            Thermostat_Mode: 'OFF'
+            power: 'on',
+            hvac_mode: 'cool', // MODIFIÉ: mode -> hvac_mode
+            target_temperature: 15.0,
+            vent_speed: 'auto',
+            unused: '0'
         };
     },
     exposes: [
         // Thermostat Mode control
         e.binary('Thermostat_Mode', ea.ALL, 'ON', 'OFF')
             .withDescription('ON: Enables thermostat mode, buttons send encrypted payloads, and the middle line is displayed. OFF: Disables thermostat mode, buttons send actions, and the middle line is hidden.'),
-
-        // Climate entity for thermostat control (use when Thermostat_Mode is ON)
-        e.climate()
-            .withSystemMode(['off', 'heat', 'cool', 'auto'])
-            .withFanMode(['auto', 'low', 'medium', 'high'])
-            .withSetpoint('occupied_heating_setpoint', 15, 30, 1)
-            .withLocalTemperature()
-            .withDescription('Climate control (HVAC Mode & Target Temperature): Use when Thermostat_Mode is ON. Set HVAC mode to "off" to turn power off, or "heat"/"cool"/"auto" to turn on and select operating mode. Target temperature range: 15-30°C. Note: Use the Temperature sensor value as the current temperature reference.'),
-
+        
+        // P - Power control as Select
+        e.enum('power', ea.ALL, ['on', 'off'])
+            .withDescription('Power control: on = On, off = Off'),
+        
+        // M - Mode control as Select
+        e.enum('hvac_mode', ea.ALL, ['cool', 'heat', 'auto']) // MODIFIÉ: mode -> hvac_mode
+            .withDescription('Operating mode: cool, heat, or auto'),
+        
+        // T - Target Temperature as Number
+        e.numeric('target_temperature', ea.ALL)
+            .withUnit('°C')
+            .withValueMin(15.0)
+            .withValueMax(30.0)
+            .withValueStep(0.1)
+            .withDescription('Target temperature setpoint (15.0 - 30.0°C)'),
+        
+        // S - Fan Speed as Select
+        e.enum('vent_speed', ea.ALL, ['auto', 'low', 'middle', 'high'])
+            .withDescription('Fan speed: auto, low, middle, or high'),
+        
         // D - Unused parameter as Select
-        // e.enum('unused', ea.ALL, ['0', '1'])
-        //     .withDescription('Wind mode: 0 or 1'),
-
+        e.enum('unused', ea.ALL, ['0', '1'])
+            .withDescription('Wind mode: 0 or 1'),
+        
         // Action for PMTSD request
         e.action(['W100_PMTSD_request'])
             .withDescription('PMTSD request sent by the W100 via the 08000844 sequence'),
-
+        
         // Sensor: Latest PMTSD data received from W100
         e.text('PMTSD_from_W100_Data', ea.STATE)
             .withDescription('Latest PMTSD values sent by the W100 when manually changed, formatted as "YYYY-MM-DD HH:mm:ss_Px_Mx_Tx_Sx_Dx"'),
     ],
     extend: [
         lumiZigbeeOTA(),
-        // m.temperature(), // Not needed since we publish climate local temperature
+        m.temperature(),
         m.humidity(),
+        // lumiExternalSensor(), // SUPPRIMÉ: Remplacé par l'appel avec options pour éviter conflit
         lumiExternalSensor({
-            temperature: 'external_temperature',
-            humidity: 'external_humidity'
-        }),
+            temperature: 'external_temperature', 
+            humidity: 'external_humidity',
+            battery: 'external_battery'
+        }), // Renomme les entités du capteur externe
         m.deviceEndpoints({endpoints: {plus: 1, center: 2, minus: 3}}),
         lumiAction({
             actionLookup: {hold: 0, single: 1, double: 2, release: 255},
