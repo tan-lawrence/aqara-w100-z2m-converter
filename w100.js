@@ -895,7 +895,9 @@ module.exports = {
         // Explicit voltage sensor bound to battery_voltage computed by the manuSpecificLumi 0x247 converter
         e.numeric('battery_voltage', ea.STATE)
             .withUnit('V')
-            .withDescription('Battery voltage reported via Aqara manuSpecificLumi lifeline (attr 0x247, tag 0x0A, uint16 in 0.0001V)')
+            .withDescription('Battery voltage reported via Aqara manuSpecificLumi lifeline (attr 0x247, tag 0x0A, uint16 in 0.0001V)'),
+        // Internal temperature sensor (mirrors `temperature` / `local_temperature` from `temperature_with_local`)
+        e.temperature(),
     ],
     extend: [
         lumiZigbeeOTA(),
