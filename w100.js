@@ -6,9 +6,6 @@ const { logger } = require("zigbee-herdsman-converters/lib/logger");
 const lumi = require("zigbee-herdsman-converters/lib/lumi");
 const m = require("zigbee-herdsman-converters/lib/modernExtend");
 
-// Minimum interval (in milliseconds) to send a PMTSD frame, even if no value has changed.
-const MIN_SEND_INTERVAL_MS = 5000;
-
 const e = exposes.presets;
 const ea = exposes.access;
 
@@ -18,7 +15,6 @@ const {
     lumiExternalSensor,
 } = lumi.modernExtend;
 
-const NS = "zhc:lumi";
 const manufacturerCode = lumi.manufacturerCode;
 
  // Custom converter to:
@@ -55,7 +51,7 @@ const manufacturerCode = lumi.manufacturerCode;
      occupied_heating_setpoint: 15,
      fan_mode: 'auto',
      unused: '0',
-     Thermostat_Mode: 'OFF',
+     thermostat_mode: 'OFF',
      min_target_temp: 5,  // Default for options
      max_target_temp: 30, // Default for options
  };
@@ -76,7 +72,7 @@ const manufacturerCode = lumi.manufacturerCode;
          occupied_heating_setpoint: state.occupied_heating_setpoint ?? DEFAULTS.occupied_heating_setpoint,
          fan_mode: state.fan_mode ?? DEFAULTS.fan_mode,
          unused: state.unused ?? DEFAULTS.unused,
-         Thermostat_Mode: state.Thermostat_Mode ?? DEFAULTS.Thermostat_Mode,
+         thermostat_mode: state.thermostat_mode ?? DEFAULTS.thermostat_mode,
      };
 
      meta.state = {
@@ -85,7 +81,7 @@ const manufacturerCode = lumi.manufacturerCode;
          occupied_heating_setpoint: normalized.occupied_heating_setpoint,
          fan_mode: normalized.fan_mode,
          unused: normalized.unused,
-         Thermostat_Mode: normalized.Thermostat_Mode,
+         thermostat_mode: normalized.thermostat_mode,
      };
 
      if (!meta.device.meta.initialized) {
@@ -96,7 +92,7 @@ const manufacturerCode = lumi.manufacturerCode;
  }
 
 
-const W100_0844_req = {
+const w100_0844_req = {
     cluster: 'manuSpecificLumi',
     type: ['attributeReport', 'readResponse'],
     convert: async (model, msg, publish, options, meta) => {
@@ -104,7 +100,7 @@ const W100_0844_req = {
 
         // Ensure a full, deterministic baseline is present in meta.state on first contact.
         // This populates all climate defaults so Z2M exposes non-null values:
-        // - Thermostat_Mode: 'OFF'
+        // - thermostat_mode: 'OFF'
         // - system_mode: 'off'
         // - occupied_heating_setpoint: 15
         // - fan_mode: 'auto'
@@ -115,7 +111,7 @@ const W100_0844_req = {
         if (!attr || !Buffer.isBuffer(attr)) {
             // No PMTSD payload, but we can still publish the initialized defaults once.
             return {
-                Thermostat_Mode: base.Thermostat_Mode,
+                thermostat_mode: base.thermostat_mode,
                 system_mode: base.system_mode,
                 occupied_heating_setpoint: base.occupied_heating_setpoint,
                 fan_mode: base.fan_mode,
@@ -170,7 +166,7 @@ const W100_0844_req = {
 
             // Send PMTSD frame built from a well-defined baseline
             try {
-                await PMTSD_to_W100.convertSet(meta.device.getEndpoint(1), 'PMTSD_to_W100', pmtsdValues, meta);
+                await pmtsd_to_w100.convertSet(meta.device.getEndpoint(1), 'pmtsd_to_w100', pmtsdValues, meta);
                 meta.logger.info(`Aqara W100: PMTSD frame sent for ${meta.device.ieeeAddr} in response to 08000844`);
             } catch (error) {
                 meta.logger.error(`Aqara W100: Failed to send PMTSD frame: ${error.message}`);
@@ -183,9 +179,11 @@ const W100_0844_req = {
     },
 };
 
-const PMTSD_to_W100 = {
-    key: ['system_mode', 'occupied_heating_setpoint', 'fan_mode', 'unused', 'PMTSD_to_W100'],
+const pmtsd_to_w100 = {
+    key: ['system_mode', 'occupied_heating_setpoint', 'fan_mode', 'unused', 'pmtsd_to_w100'],
     convertSet: async (entity, key, value, meta) => {
+        // Minimum interval (in milliseconds) to send a PMTSD frame, even if no value has changed.
+        const MIN_SEND_INTERVAL_MS = 5000;
         // Logger fallback in case meta.logger is undefined
         const log = meta.logger || logger;
         
@@ -236,7 +234,7 @@ const PMTSD_to_W100 = {
         let hasChanged = false;
         let newDisplayValue = value;
 
-        if (key === 'PMTSD_to_W100') {
+        if (key === 'pmtsd_to_w100') {
             // Internal call: use value as {P, M, T, S, D} object
             if (value.P !== undefined) pmtsd.P = Number(value.P);
             if (value.M !== undefined) pmtsd.M = Number(value.M);
@@ -248,9 +246,9 @@ const PMTSD_to_W100 = {
             // For keys set individually by Home Assistant
             let fieldName, previousValue, numValue;
 
-            // Check if Thermostat_Mode is ON for climate commands
-            if (meta.state?.Thermostat_Mode !== 'ON' && ['system_mode', 'occupied_heating_setpoint', 'fan_mode'].includes(key)) {
-                log.warning(`Aqara W100: Ignoring ${key} command - Thermostat_Mode is not ON`);
+            // Check if thermostat_mode is ON for climate commands
+            if (meta.state?.thermostat_mode !== 'ON' && ['system_mode', 'occupied_heating_setpoint', 'fan_mode'].includes(key)) {
+                log.warning(`Aqara W100: Ignoring ${key} command - thermostat_mode is not ON`);
                 return { state: {} };
             }
 
@@ -636,8 +634,8 @@ const PMTSD_from_W100 = {
     },
 };
 
-const Thermostat_Mode = {
-    key: ['Thermostat_Mode'],
+const thermostat_mode = {
+    key: ['thermostat_mode'],
     convertSet: async (entity, key, value, meta) => {
         // Logger fallback in case meta.logger is undefined
         const log = meta.logger || logger;
@@ -676,7 +674,7 @@ const Thermostat_Mode = {
             frame = Buffer.concat([prefix, messageAlea, zigbeeHeader, messageId, control, payloadMacs, payloadTail]);
 
             // Log the frame for debugging
-            log.info(`Aqara W100: Thermostat_Mode ON frame: ${frame.toString('hex')}`);
+            log.info(`Aqara W100: thermostat_mode ON frame: ${frame.toString('hex')}`);
             
             await endpoint.write(
                 64704,
@@ -704,12 +702,12 @@ const Thermostat_Mode = {
             );
         }
 
-        log.info(`Aqara W100: Thermostat_Mode set to ${value}`);
+        log.info(`Aqara W100: thermostat_mode set to ${value}`);
 
         // Make sure baseline is marked initialized once thermostat mode is touched
         ensureDefaults(meta);
 
-        return {state: {Thermostat_Mode: value}};
+        return {state: {thermostat_mode: value}};
     },
 };
 
@@ -763,11 +761,11 @@ module.exports = {
                             // Expose as battery_voltage for Z2M
                             payload.battery_voltage = voltageRounded;
 
-                            // Derive battery %:
-                            // - 2.8 V -> 0%
-                            // - 3.2 V -> 100%
+                            // Derive battery % ( 2 x crc2450 ):
+                            // - 5.6 V -> 0%
+                            // - 6.4 V -> 100%
                             // Clamp outside this range.
-                            const pct = Math.round(((voltage - 2.8) / 0.4) * 100);
+                            const pct = Math.round(((voltage - 5,6) / 0.8) * 100);
                             payload.battery = Math.min(100, Math.max(0, pct));
 
                             // Also expose under meta.state so e.battery()/e.voltage() have data
@@ -783,22 +781,22 @@ module.exports = {
                 return payload;
             },
         },
-        W100_0844_req,
+        w100_0844_req,
         PMTSD_from_W100,
         temperature_with_local,
         lumi.fromZigbee.lumi_specific,
         // Keep generic battery converter; it can still consume batteryPercentageRemaining if Aqara ever sends it.
         fz.battery,
     ],
-    toZigbee: [PMTSD_to_W100, Thermostat_Mode],
+    toZigbee: [pmtsd_to_w100, thermostat_mode],
     configure: async (device, coordinatorEndpoint, loggerInstance) => {
         // Keep configuration side-effect free regarding physical thermostat mode.
         // We only:
         // - Seed logical defaults in device.meta.state so Z2M has a consistent baseline.
-        // - Explicitly send Thermostat_Mode = OFF frame once, to ensure the device
+        // - Explicitly send thermostat_mode = OFF frame once, to ensure the device
         //   remains out of thermostat mode (or is turned off if it defaulted to ON).
         //
-        // We DO NOT send any Thermostat_Mode ON / enable frames here.
+        // We DO NOT send any thermostat_mode ON / enable frames here.
 
         const log = loggerInstance || logger || console;
 
@@ -822,19 +820,31 @@ module.exports = {
         if (device.meta.state.unused == null) {
             device.meta.state.unused = '0';
         }
-        if (device.meta.state.Thermostat_Mode == null) {
-            device.meta.state.Thermostat_Mode = 'OFF';
+        if (device.meta.state.thermostat_mode == null) {
+            device.meta.state.thermostat_mode = 'OFF';
         }
-        // Best-effort: actively send Thermostat_Mode = OFF to keep device out of thermostat mode.
+        // Best-effort: actively send thermostat_mode = OFF to keep device out of thermostat mode.
         try {
-            await Thermostat_Mode.convertSet(device, 'Thermostat_Mode', 'OFF', {
+            await thermostat_mode.convertSet(device, 'thermostat_mode', 'OFF', {
                 device,
                 state: device.meta.state,
                 logger: log,
             });
         } catch (error) {
             if (typeof log.info === 'function') {
-                log.info(`Aqara W100: failed to send initial Thermostat_Mode OFF during configure: ${error.message}`);
+                log.info(`Aqara W100: failed to send initial thermostat_mode OFF during configure: ${error.message}`);
+            }
+        }
+
+        // Read Aqara specific cluster endpoints
+        try {
+            const endpoint = device.getEndpoint(1);
+            if (endpoint && typeof endpoint.configureReporting === 'function') {
+                await endpoint.read("manuSpecificLumi", [0x00ee], { manufacturerCode: manufacturerCode }); // Read OTA data; makes the device expose more attributes related to OTA
+            }
+        } catch(error) {
+            if (typeof log.info === 'function') {
+                log.info(`Aqara W100: failed to read aqara specific clusters: ${error.message}`);
             }
         }
 
@@ -894,7 +904,7 @@ module.exports = {
         }
 
         if (typeof log.info === 'function') {
-            log.info('Aqara W100: configure completed, defaults seeded, Thermostat_Mode enforced OFF, temperature reporting forced, and genPowerCfg battery reporting configured.');
+            log.info('Aqara W100: configure completed, defaults seeded, thermostat_mode enforced OFF, temperature reporting forced, and genPowerCfg battery reporting configured.');
         }
     },
     exposes: (device, options = {}) => {
@@ -905,16 +915,16 @@ module.exports = {
 
         return [
             // Thermostat Mode control
-            e.binary('Thermostat_Mode', ea.ALL, 'ON', 'OFF')
+            e.binary('thermostat_mode', ea.ALL, 'ON', 'OFF')
                 .withDescription('ON: Enables thermostat mode, buttons send encrypted payloads, and the middle line is displayed. OFF: Disables thermostat mode, buttons send actions, and the middle line is hidden.'),
 
-            // Climate entity for thermostat control (use when Thermostat_Mode is ON)
+            // Climate entity for thermostat control (use when thermostat_mode is ON)
             e.climate()
                 .withSystemMode(['off', 'heat', 'cool', 'auto'])
                 .withFanMode(['auto', 'low', 'medium', 'high'])
                 .withSetpoint('occupied_heating_setpoint', minTemp, maxTemp, 1)
                 .withLocalTemperature()
-                .withDescription(`Climate control (HVAC Mode & Target Temperature): Use when Thermostat_Mode is ON. Configure min/max temperature range in device-specific Settings (currently: ${minTemp}-${maxTemp}°C).`),
+                .withDescription(`Climate control (HVAC Mode & Target Temperature): Use when thermostat_mode is ON. Configure min/max temperature range in device-specific Settings (currently: ${minTemp}-${maxTemp}°C).`),
 
             // D - Unused parameter as Select
             // e.enum('unused', ea.ALL, ['0', '1'])
