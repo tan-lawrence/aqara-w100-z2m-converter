@@ -1,5 +1,4 @@
 const {Zcl} = require("zigbee-herdsman");
-const fz = require("zigbee-herdsman-converters/converters/fromZigbee");
 const exposes = require("zigbee-herdsman-converters/lib/exposes");
 const { logger } = require("zigbee-herdsman-converters/lib/logger");
 const lumi = require("zigbee-herdsman-converters/lib/lumi");
@@ -770,7 +769,7 @@ module.exports = {
         if (device.meta.state.thermostat_mode == null) {
             device.meta.state.thermostat_mode = 'OFF';
         }
-        // Best-effort: actively send thermostat_mode = OFF to keep device out of thermostat mode.
+        // Actively send thermostat_mode = OFF
         try {
             await thermostat_mode.convertSet(device, 'thermostat_mode', 'OFF', {
                 device,
@@ -780,18 +779,6 @@ module.exports = {
         } catch (error) {
             if (typeof log.info === 'function') {
                 log.info(`Aqara W100: failed to send initial thermostat_mode OFF during configure: ${error.message}`);
-            }
-        }
-
-        // Read Aqara specific cluster endpoints
-        try {
-            const endpoint = device.getEndpoint(1);
-            if (endpoint && typeof endpoint.configureReporting === 'function') {
-                await endpoint.read("manuSpecificLumi", [0x00ee], { manufacturerCode: manufacturerCode }); // Read OTA data; makes the device expose more attributes related to OTA
-            }
-        } catch(error) {
-            if (typeof log.info === 'function') {
-                log.info(`Aqara W100: failed to read aqara specific clusters: ${error.message}`);
             }
         }
 
@@ -998,7 +985,7 @@ module.exports = {
         m.numeric({
             name: "temp_period",
             valueMin: 1,
-            valueMax: 10,
+            valueMax: 600,
             valueStep: 1,
             scale: 1000,
             unit: "sec",
@@ -1033,7 +1020,7 @@ module.exports = {
         m.numeric({
             name: "humi_period",
             valueMin: 1,
-            valueMax: 10,
+            valueMax: 600,
             valueStep: 1,
             scale: 1000,
             unit: "sec",
