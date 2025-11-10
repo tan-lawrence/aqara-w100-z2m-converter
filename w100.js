@@ -15,25 +15,10 @@ const {
 
 const manufacturerCode = lumi.manufacturerCode;
 
-const lumi_battery_from_f7 = {
-    cluster: 'manuSpecificLumi',
-    type: ['attributeReport', 'readResponse'],
-    convert: (model, msg, publish, options, meta) => {
-        const attribute = 0xF7;
-        if (msg.data[attribute]) {
-            const data = lumi.buffer2DataObject(model, msg.data[attribute]);
-            const battery = data[0x05]; // Key for battery percentage is 0x13 (19)
-            if (battery !== undefined) {
-                return {battery: battery};
-            }
-        }
-    },
-};
-
- // Custom converter to:
- // - Expose temperature as a standard sensor value for Z2M
- // - Always keep local_temperature in sync for the climate entity
- const temperature_with_local = {
+// Custom converter to:
+// - Expose temperature as a standard sensor value for Z2M
+// - Always keep local_temperature in sync for the climate entity
+const temperature_with_local = {
      cluster: 'msTemperatureMeasurement',
      type: ['attributeReport', 'readResponse'],
      convert: (model, msg, publish, options, meta) => {
@@ -105,90 +90,107 @@ const lumi_battery_from_f7 = {
  }
 
 
-const w100_0844_req = {
+// Consolidated converter for manuSpecificLumi cluster
+// Handles both battery reporting (0xF7) and PMTSD requests (65522/0xFFF2)
+const w100_manuSpecific_handler = {
     cluster: 'manuSpecificLumi',
     type: ['attributeReport', 'readResponse'],
     convert: async (model, msg, publish, options, meta) => {
-        if (!meta.state) meta.state = {};
-
-        // Ensure a full, deterministic baseline is present in meta.state on first contact.
-        // This populates all climate defaults so Z2M exposes non-null values:
-        // - thermostat_mode: 'OFF'
-        // - system_mode: 'off'
-        // - occupied_heating_setpoint: 15
-        // - fan_mode: 'auto'
-        // - unused: '0'
-        const base = ensureDefaults(meta);
-
-        const attr = msg.data[65522];
-        if (!attr || !Buffer.isBuffer(attr)) {
-            // No PMTSD payload, but we can still publish the initialized defaults once.
-            return {
-                thermostat_mode: base.thermostat_mode,
-                system_mode: base.system_mode,
-                occupied_heating_setpoint: base.occupied_heating_setpoint,
-                fan_mode: base.fan_mode,
-                unused: base.unused,
-            };
+        let result = {};
+        
+        // Handle battery reporting (attribute 0xF7)
+        if (msg.data[0xF7]) {
+            const data = lumi.buffer2DataObject(model, msg.data[0xF7]);
+            const battery = data[0x05];
+            if (battery !== undefined) {
+                result.battery = battery;
+            }
         }
+        
+        // Handle PMTSD request (attribute 65522/0xFFF2)
+        if (msg.data[65522]) {
+            if (!meta.state) meta.state = {};
 
-        const endsWith = Buffer.from([0x08, 0x00, 0x08, 0x44]);
-        if (attr.slice(-4).equals(endsWith)) {
-            meta.logger.info(`Aqara W100: PMTSD request detected from device ${meta.device.ieeeAddr}`);
-
-            // Ensure we always have a deterministic baseline before responding
+            // Ensure a full, deterministic baseline is present in meta.state on first contact.
+            // This populates all climate defaults so Z2M exposes non-null values:
+            // - thermostat_mode: 'OFF'
+            // - system_mode: 'off'
+            // - occupied_heating_setpoint: 15
+            // - fan_mode: 'auto'
+            // - unused: '0'
             const base = ensureDefaults(meta);
 
-            // Function to convert string -> number
-            const convertToNumber = (key, value) => {
-                if (typeof value !== 'string') return value;
-
-                switch (key) {
-                    case 'system_mode': {
-                        const modeMap = {cool: 0, heat: 1, auto: 2};
-                        return modeMap[value.toLowerCase()] ?? 0;
-                    }
-                    case 'fan_mode': {
-                        const speedMap = {auto: 0, low: 1, medium: 2, high: 3};
-                        return speedMap[value.toLowerCase()] ?? 0;
-                    }
-                    case 'unused':
-                        return parseInt(value, 10);
-                    default:
-                        return value;
-                }
-            };
-
-            // Determine mode (M) using current or last active when off
-            let modeValue = 0;
-            if (base.system_mode === 'off') {
-                // Device logically off: use stored last active mode or default cool(0)
-                modeValue = meta.device.meta?.lastActiveMode ?? 0;
+            const attr = msg.data[65522];
+            if (!attr || !Buffer.isBuffer(attr)) {
+                // No PMTSD payload, but we can still publish the initialized defaults once.
+                result = {
+                    ...result,
+                    thermostat_mode: base.thermostat_mode,
+                    system_mode: base.system_mode,
+                    occupied_heating_setpoint: base.occupied_heating_setpoint,
+                    fan_mode: base.fan_mode,
+                    unused: base.unused,
+                };
             } else {
-                modeValue = convertToNumber('system_mode', base.system_mode) ?? 0;
+                const endsWith = Buffer.from([0x08, 0x00, 0x08, 0x44]);
+                if (attr.slice(-4).equals(endsWith)) {
+                    meta.logger.info(`Aqara W100: PMTSD request detected from device ${meta.device.ieeeAddr}`);
+
+                    // Ensure we always have a deterministic baseline before responding
+                    const base = ensureDefaults(meta);
+
+                    // Function to convert string -> number
+                    const convertToNumber = (key, value) => {
+                        if (typeof value !== 'string') return value;
+
+                        switch (key) {
+                            case 'system_mode': {
+                                const modeMap = {cool: 0, heat: 1, auto: 2};
+                                return modeMap[value.toLowerCase()] ?? 0;
+                            }
+                            case 'fan_mode': {
+                                const speedMap = {auto: 0, low: 1, medium: 2, high: 3};
+                                return speedMap[value.toLowerCase()] ?? 0;
+                            }
+                            case 'unused':
+                                return parseInt(value, 10);
+                            default:
+                                return value;
+                        }
+                    };
+
+                    // Determine mode (M) using current or last active when off
+                    let modeValue = 0;
+                    if (base.system_mode === 'off') {
+                        // Device logically off: use stored last active mode or default cool(0)
+                        modeValue = meta.device.meta?.lastActiveMode ?? 0;
+                    } else {
+                        modeValue = convertToNumber('system_mode', base.system_mode) ?? 0;
+                    }
+
+                    const pmtsdValues = {
+                        // P=1 when system_mode is 'off', else 0
+                        P: base.system_mode === 'off' ? 1 : 0,
+                        M: modeValue,
+                        T: base.occupied_heating_setpoint,
+                        S: convertToNumber('fan_mode', base.fan_mode) ?? 0,
+                        D: convertToNumber('unused', base.unused) ?? 0,
+                    };
+
+                    // Send PMTSD frame built from a well-defined baseline
+                    try {
+                        await pmtsd_to_w100.convertSet(meta.device.getEndpoint(1), 'pmtsd_to_w100', pmtsdValues, meta);
+                        meta.logger.info(`Aqara W100: PMTSD frame sent for ${meta.device.ieeeAddr} in response to 08000844`);
+                    } catch (error) {
+                        meta.logger.error(`Aqara W100: Failed to send PMTSD frame: ${error.message}`);
+                    }
+
+                    result.action = 'W100_PMTSD_request';
+                }
             }
-
-            const pmtsdValues = {
-                // P=1 when system_mode is 'off', else 0
-                P: base.system_mode === 'off' ? 1 : 0,
-                M: modeValue,
-                T: base.occupied_heating_setpoint,
-                S: convertToNumber('fan_mode', base.fan_mode) ?? 0,
-                D: convertToNumber('unused', base.unused) ?? 0,
-            };
-
-            // Send PMTSD frame built from a well-defined baseline
-            try {
-                await pmtsd_to_w100.convertSet(meta.device.getEndpoint(1), 'pmtsd_to_w100', pmtsdValues, meta);
-                meta.logger.info(`Aqara W100: PMTSD frame sent for ${meta.device.ieeeAddr} in response to 08000844`);
-            } catch (error) {
-                meta.logger.error(`Aqara W100: Failed to send PMTSD frame: ${error.message}`);
-            }
-
-            return {
-                action: 'W100_PMTSD_request',
-            };
         }
+        
+        return Object.keys(result).length > 0 ? result : undefined;
     },
 };
 
@@ -744,11 +746,10 @@ module.exports = {
             .withDescription('Maximum target temperature for the thermostat (default: 30°C)'),
     ],
     fromZigbee: [
-        w100_0844_req,
+        w100_manuSpecific_handler,
         PMTSD_from_W100,
         temperature_with_local,
         lumi.fromZigbee.lumi_specific,
-        lumi_battery_from_f7,
     ],
     toZigbee: [pmtsd_to_w100, thermostat_mode],
     configure: async (device, coordinatorEndpoint, loggerInstance) => {
