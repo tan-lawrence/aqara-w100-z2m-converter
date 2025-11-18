@@ -230,17 +230,17 @@ const pmtsd_to_w100 = {
             P: initialP,
             M: initialM,
             T: typeof base.occupied_heating_setpoint === 'string'
-                ? parseInt(base.occupied_heating_setpoint, 10)
+                ? parseFloat(base.occupied_heating_setpoint, 10)
                 : base.occupied_heating_setpoint,
             S: initialS,
             D: typeof base.unused === 'string'
-                ? parseInt(base.unused, 10)
+                ? parseFloat(base.unused, 10)
                 : base.unused,
         };
 
         // Convert text values to numbers for internal storage
         if (typeof pmtsd.T === 'string') {
-            pmtsd.T = parseInt(pmtsd.T, 10);
+            pmtsd.T = parseFloat(pmtsd.T, 10);
         }
         if (typeof pmtsd.D === 'string') {
             pmtsd.D = parseInt(pmtsd.D, 10);
@@ -326,11 +326,9 @@ const pmtsd_to_w100 = {
                     if (isNaN(temp) || temp < minTarget || temp > maxTarget) {
                         throw new Error(`occupied_heating_setpoint must be between ${minTarget} and ${maxTarget}`);
                     }
-                    // Round to nearest integer
-                    const rounded = Math.round(temp);
-                    pmtsd.T = rounded;
-                    newDisplayValue = rounded;
-                    hasChanged = rounded !== previousValue;
+                    pmtsd.T = temp;
+                    newDisplayValue = temp;
+                    hasChanged = temp !== previousValue;
                     break;
                 case 'fan_mode':
                     previousValue = pmtsd.S;
@@ -567,7 +565,7 @@ const PMTSD_from_W100 = {
                     case 't':
                         newKey = 'TW';
                         stateKey = 'occupied_heating_setpoint';
-                        processedValue = parseInt(value, 10);
+                        processedValue = parseFloat(value, 10);
                         // Don't validate against min/max here since this is incoming data from device
                         if (isNaN(processedValue)) {
                             return;
@@ -846,7 +844,7 @@ module.exports = {
             e.climate()
                 .withSystemMode(['off', 'heat', 'cool', 'auto'])
                 .withFanMode(['auto', 'low', 'medium', 'high'])
-                .withSetpoint('occupied_heating_setpoint', minTemp, maxTemp, 1)
+                .withSetpoint('occupied_heating_setpoint', minTemp, maxTemp, 0.5)
                 .withLocalTemperature()
                 .withDescription(`Climate control (HVAC Mode & Target Temperature): Use when thermostat_mode is ON. Configure min/max temperature range in device-specific Settings (currently: ${minTemp}-${maxTemp}°C).`),
 
