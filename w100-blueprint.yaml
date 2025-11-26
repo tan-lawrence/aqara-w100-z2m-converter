@@ -6,6 +6,7 @@ blueprint:
     Optionally publishes external temperature and humidity data to the W100 display.
     Configure which HVAC modes and features your system supports.
   domain: automation
+  
   input:
     main_thermostat:
       name: Main Thermostat
@@ -75,12 +76,6 @@ blueprint:
         entity:
           domain: sensor
           device_class: humidity
-    w100_thermostat_mode:
-      name: W100 Thermostat Mode Switch
-      description: The W100 thermostat mode switch entity
-      selector:
-        entity:
-          domain: switch
 
 variables:
   main_thermostat: !input main_thermostat
@@ -93,7 +88,6 @@ variables:
   enable_external_data: !input enable_external_data
   external_temperature_sensor: !input external_temperature_sensor
   external_humidity_sensor: !input external_humidity_sensor
-  w100_thermostat_mode: !input w100_thermostat_mode
 
 triggers:
   - trigger: state
@@ -120,7 +114,8 @@ actions:
             id:
               - climate_state
           - condition: state
-            entity_id: !input w100_thermostat_mode
+            entity_id: >-
+              {{ 'switch.' ~ aqara_w100.split('.')[1] ~ '_thermostat_mode' }}
             state:
               - "on"
         sequence:
@@ -129,13 +124,15 @@ actions:
                 value_template: >-
                   {{ states(main_thermostat) != states(aqara_w100) }}
               - condition: state
-                entity_id: !input w100_thermostat_mode
+                entity_id: >-
+                  {{ 'switch.' ~ aqara_w100.split('.')[1] ~ '_thermostat_mode' }}
                 state:
                   - "on"
             then:
               - action: climate.set_hvac_mode
                 target:
-                  entity_id: !input aqara_w100
+                  entity_id: >-
+                    {{ 'switch.' ~ aqara_w100.split('.')[1] ~ '_thermostat_mode' }}
                 data:
                   hvac_mode: |
                     {{ states(main_thermostat) }}
@@ -160,7 +157,8 @@ actions:
             id:
               - w100_climate_state
           - condition: state
-            entity_id: !input w100_thermostat_mode
+            entity_id: >-
+              {{ 'switch.' ~ aqara_w100.split('.')[1] ~ '_thermostat_mode' }}
             state:
               - "on"
         sequence:
