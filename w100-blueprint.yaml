@@ -6,7 +6,6 @@ blueprint:
     Optionally publishes external temperature and humidity data to the W100 display.
     Configure which HVAC modes and features your system supports.
   domain: automation
-  
   input:
     main_thermostat:
       name: Main Thermostat
@@ -88,7 +87,7 @@ variables:
   enable_external_data: !input enable_external_data
   external_temperature_sensor: !input external_temperature_sensor
   external_humidity_sensor: !input external_humidity_sensor
-  thermostat_mode_switch: >-
+  w100_thermostat_mode: >-
     {{ 'switch.' ~ aqara_w100.split('.')[1] ~ '_thermostat_mode' }}
 
 triggers:
@@ -115,17 +114,19 @@ actions:
           - condition: trigger
             id:
               - climate_state
-          - condition: template
-            value_template: >-
-              {{ is_state(thermostat_mode_switch, 'on') }}
+          - condition: state
+            entity_id: !input w100_thermostat_mode
+            state:
+              - "on"
         sequence:
           - if:
               - condition: template
                 value_template: >-
                   {{ states(main_thermostat) != states(aqara_w100) }}
-              - condition: template
-                value_template: >-
-                  {{ is_state(thermostat_mode_switch, 'on') }}
+              - condition: state
+                entity_id: !input w100_thermostat_mode
+                state:
+                  - "on"
             then:
               - action: climate.set_hvac_mode
                 target:
@@ -149,14 +150,14 @@ actions:
                     {{ state_attr(main_thermostat, "temperature") }}
               - delay:
                   seconds: "{{ sync_delay }}"
-      
       - conditions:
           - condition: trigger
             id:
               - w100_climate_state
-          - condition: template
-            value_template: >-
-              {{ is_state(thermostat_mode_switch, 'on') }}
+          - condition: state
+            entity_id: !input w100_thermostat_mode
+            state:
+              - "on"
         sequence:
           - if:
               - condition: template
@@ -228,7 +229,6 @@ actions:
                     {{ state_attr(aqara_w100, "fan_mode") }}
               - delay:
                   seconds: "{{ sync_delay }}"
-
       - conditions:
           - condition: trigger
             id:
