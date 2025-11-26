@@ -249,7 +249,8 @@ actions:
             then:
               - action: number.set_value
                 target:
-                  entity_id: {{ 'number.' ~ aqara_w100.split('.')[1] ~ '_external_temperature' }}
+                  entity_id: >-
+                    {{ 'number.' ~ aqara_w100.split('.')[1] ~ '_external_temperature' }}
                 data:
                   value: |
                     {{ states(external_temperature_sensor) | float }}
@@ -262,7 +263,8 @@ actions:
             then:
               - action: number.set_value
                 target:
-                  entity_id: {{ 'number.' ~ aqara_w100.split('.')[1] ~ '_external_humidity' }}
+                  entity_id: >-
+                    {{ 'number.' ~ aqara_w100.split('.')[1] ~ '_external_humidity' }}
                 data:
                   value: |
                     {{ states(external_humidity_sensor) | float }}
