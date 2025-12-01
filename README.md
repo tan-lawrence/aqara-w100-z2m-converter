@@ -1,7 +1,10 @@
 # Aqara W100 External Converter for Zigbee2MQTT + Home Assistant Blueprint
 
-**Edit:** Those changes have been merged in zigbee-herdsman-converters by ['PR #10787'](https://github.com/Koenkk/zigbee-herdsman-converters/pull/10787)
 **There's no need of this converter with Z2M >= 2.7.0.**
+
+**Those changes have been merged in zigbee-herdsman-converters by ['PR #10787'](https://github.com/Koenkk/zigbee-herdsman-converters/pull/10787)**
+
+
 
 **This project provides:**
 
