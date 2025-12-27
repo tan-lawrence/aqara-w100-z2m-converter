@@ -151,7 +151,7 @@ actions:
                   seconds: "{{ sync_delay }}"
           - if:
               - condition: template
-                value_template: >
+                value_template: >-
                   {# Define the variables#}
                   {% set source = state_attr(main_thermostat, "fan_mode") %}
                   {% set target = state_attr(aqara_w100, "fan_mode") %}
@@ -242,8 +242,7 @@ actions:
                   seconds: "{{ sync_delay }}"
           - if:
               - condition: template
-                value_template: >
-                  {{
+                value_template: >-
                   {# Define the variables#}
                   {% set source = state_attr(main_thermostat, "fan_mode") %}
                   {% set target = state_attr(aqara_w100, "fan_mode") %}
@@ -262,9 +261,11 @@ actions:
                   fan_mode: |
                     {% set source = state_attr(aqara_w100, "fan_mode") %}
                     {% set target_valid_list = state_attr(main_thermostat, "fan_modes") %}
+                    
                     {# If source is med/medium, find the target's specific medium mode #}
                     {% if source | lower == 'med' or source | lower == 'medium' %}
                       {{ target_valid_list | select('search', '(?i)^med') | first | default(source) }}
+                      
                     {# Otherwise just pass the source through #}
                     {% else %}
                       {{ source }}
